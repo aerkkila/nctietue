@@ -13,8 +13,10 @@ static SDL_Renderer* rend;
 static SDL_Window* window;
 static SDL_Texture* base;
 static int win_w, win_h, xid, yid;
-static int invert_y, stop;
+static int invert_y, stop, echo_on;
 static double scale;
+static double minshift;
+static double maxshift;
 static unsigned char color1d_fg[3] = {0, 0, 0};
 static unsigned char color1d_bg[3] = {255, 255, 255};
 static void (*redraw)(nct_var*);
@@ -23,6 +25,7 @@ SDL_Event event;
 
 typedef union {
   void* v;
+  float f;
 } Arg;
 
 typedef struct {
@@ -32,17 +35,30 @@ typedef struct {
   Arg arg;
 } Binding;
 
-#define ONE_TYPE(nctype, b, ctype)					\
+#define ONE_TYPE(nctype, form, ctype)					\
   static void draw2d_##nctype(nct_var* var)				\
   {									\
-    int xlen = var->dimlens[xid];					\
+    int value, xlen = var->dimlens[xid];				\
     double di=0, dj=0;							\
     ctype minmax[2];							\
     nct_minmax_##nctype(var, minmax);					\
+    ctype range = minmax[1]-minmax[0];					\
+    minmax[0] += range*minshift;					\
+    minmax[1] += range*maxshift;					\
+    if(echo_on)								\
+      printf("min %" #form ", max %" #form "\n"				\
+	     "minshift %.4lf, maxshift %.4lf\n",			\
+	     minmax[0], minmax[1], minshift, maxshift);			\
     if(invert_y) {							\
       for(int j=win_h-1; j>=0; j--, dj+=scale) {			\
 	for(int i=0; i<win_w; i++, di+=scale) {				\
-	  int value = (((ctype*)var->data)[(int)dj*xlen + (int)di] - minmax[0]) * 255 / (minmax[1]-minmax[0]); \
+	  ctype val = ((ctype*)var->data)[(int)dj*xlen + (int)di];	\
+	  if(val<=minmax[0])						\
+	    value = 0;							\
+	  else if (val>=minmax[1])					\
+	    value = 255;						\
+	  else								\
+	    value = (val - minmax[0]) * 255 / (minmax[1]-minmax[0]);	\
 	  SDL_SetRenderDrawColor(rend, value, value, value, 255);	\
 	  SDL_RenderDrawPoint(rend, i, j);				\
 	}								\
@@ -139,9 +155,28 @@ void invert_y_func(Arg unused) {
   redraw(var);
 }
 
+void shift_min(Arg shift) {
+  minshift += shift.f;
+  redraw(var);
+}
+
+void shift_max(Arg shift) {
+  maxshift += shift.f;
+  redraw(var);
+}
+
+void toggle_echo(Arg _) {
+  echo_on = !echo_on;
+}
+
 Binding keydown_bindings[] = {
-  { SDLK_i, KMOD_SHIFT, invert_y_func, {0} },
-  { SDLK_q, 0,          quit,          {0} },
+  { SDLK_i, KMOD_SHIFT, invert_y_func, {0}        },
+  { SDLK_q, 0,          quit,          {0}        },
+  { SDLK_1, 0,          shift_min,     {.f=-0.02} },
+  { SDLK_1, KMOD_SHIFT, shift_max,     {.f=-0.02} },
+  { SDLK_2, 0,          shift_min,     {.f=0.02}  },
+  { SDLK_2, KMOD_SHIFT, shift_max,     {.f=0.02}  },
+  { SDLK_e, 0,          toggle_echo,   {0}        },
 };
 
 int get_modstate() {
